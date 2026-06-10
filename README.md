@@ -44,3 +44,8 @@ Install required Python packages:
 
 ```bash
 pip install hidapi requests
+```
+
+## 📖 Documentations
+
+See docs/architecture.md for project structure.

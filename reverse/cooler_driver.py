@@ -15,7 +15,6 @@ Requis:
 import hid
 import time
 import requests
-import ctypes
 
 # ─── Configuration ────────────────────────────────────────────────
 VENDOR_ID   = 0x5131  # X-Gamerx Z-1300 / Z-6000
@@ -100,8 +99,8 @@ def build_packet(cpu_temp: int, gpu_temp: int) -> list:
         Byte 36     : GPU température en °C  ← 🌡️
         Bytes 37-62 : padding 0x00
     """
-    # Timestamp Windows sur 3 bytes (évite le rejet du paquet)
-    tick = ctypes.windll.kernel32.GetTickCount()
+    # Timing
+    tick = int(time.monotonic() * 1000)
     b3 = (tick >> 16) & 0xFF
     b4 = (tick >> 8)  & 0xFF
     b5 = tick & 0xFF

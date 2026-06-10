@@ -1,0 +1,7 @@
+{
+  "devices": {
+    "01": "cpu.package",
+    "02": "gpu.core"
+  },
+  "mode": "normal"
+}
