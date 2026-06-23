@@ -2,28 +2,34 @@
 X-Gamerx Z-1300 / Z-6000 CPU Cooler Display Driver
 ---------------------------------------------------
 Reverse engineered protocol - Open Source
-Compatible: Windows 10 (Linux port en cours)
+Compatible: Windows / Linux
 
-Dépendances:
+Dépendances Linux:
+    pip install hidapi psutil
+
+Dépendances Windows:
     pip install hidapi requests
-
-Requis:
-    - LibreHardwareMonitor avec Web Server activé (port 8085)
-    - Lancer en administrateur
+    Requis: LibreHardwareMonitor avec Web Server activé (port 8085)
+            https://github.com/LibreHardwareMonitor/LibreHardwareMonitor
 """
 
 import hid
 import time
-import requests
+import platform
 
 # ─── Configuration ────────────────────────────────────────────────
 VENDOR_ID   = 0x5131  # X-Gamerx Z-1300 / Z-6000
 PRODUCT_ID  = 0x2007
-LHM_URL     = "http://localhost:8085/data.json"
 REFRESH_SEC = 1       # Intervalle de mise à jour en secondes
+OS          = platform.system()  # "Windows" ou "Linux"
 
-# Session HTTP réutilisable (évite de recréer une connexion à chaque appel)
-session = requests.Session()
+# ─── Imports spécifiques à l'OS ───────────────────────────────────
+if OS == "Windows":
+    import requests
+    LHM_URL = "http://localhost:8085/data.json"
+    session = requests.Session()
+elif OS == "Linux":
+    import psutil
 
 # ─── Détection automatique ────────────────────────────────────────
 def find_device() -> tuple[int, int] | None:
@@ -46,8 +52,8 @@ def find_device() -> tuple[int, int] | None:
 
     return None
 
-# ─── Lecture des températures ─────────────────────────────────────
-def get_temps() -> tuple[int, int]:
+# ─── Lecture des températures Windows ────────────────────────────
+def get_temps_windows() -> tuple[int, int]:
     """
     Récupère CPU Package et GPU Core via LibreHardwareMonitor.
     Retourne (cpu_temp, gpu_temp) en °C.
@@ -83,23 +89,69 @@ def get_temps() -> tuple[int, int]:
         print(f"⚠️  Erreur lecture températures: {e}")
         return 0, 0
 
-# ─── Construction du paquet HID ──────────────────────────────────
-def build_packet(cpu_temp: int, gpu_temp: int) -> list:
+# ─── Lecture des températures Linux ──────────────────────────────
+def get_temps_linux() -> tuple[int, int]:
     """
-    Construit le paquet HID de 63 bytes (+ Report ID 0x1b = 64 total).
+    Récupère CPU et GPU via psutil + lm-sensors.
+    Supporte AMD (k10temp) et Intel (coretemp).
+    """
+    cpu_temp = 0
+    gpu_temp = 0
+
+    try:
+        temps = psutil.sensors_temperatures()
+
+        # CPU — AMD ou Intel
+        for chip in ['k10temp', 'coretemp']:
+            if chip in temps:
+                for sensor in temps[chip]:
+                    if sensor.label in ['Tdie', 'Package id 0']:
+                        cpu_temp = int(sensor.current)
+                        break
+                if cpu_temp:
+                    break
+
+        # GPU — AMD ou Nvidia
+        for chip in ['amdgpu', 'nouveau', 'nvidia']:
+            if chip in temps:
+                for sensor in temps[chip]:
+                    if sensor.label == 'edge':
+                        gpu_temp = int(sensor.current)
+                        break
+                if gpu_temp:
+                    break
+
+    except Exception as e:
+        print(f"⚠️  Erreur lecture températures: {e}")
+
+    return cpu_temp, gpu_temp
+
+# ─── Lecture des températures (auto OS) ──────────────────────────
+def get_temps() -> tuple[int, int]:
+    if OS == "Windows":
+        return get_temps_windows()
+    elif OS == "Linux":
+        return get_temps_linux()
+    else:
+        print(f"⚠️  OS non supporté: {OS}")
+        return 0, 0
+
+# ─── Construction du paquet HID ──────────────────────────────────
+def build_packet_windows(cpu_temp: int, gpu_temp: int) -> list:
+    """
+    Protocole Windows — paquet complexe 64 bytes.
 
     Structure découverte par reverse engineering:
         Byte 00     : Report ID (0x1b)
         Byte 01     : 0x00 fixe
         Byte 02     : CPU température en °C  ← 🌡️
-        Bytes 03-05 : Timestamp Windows (3 bytes)
+        Bytes 03-05 : Timestamp (3 bytes)
         Bytes 06-07 : 0x02 0xa5 fixe
         Bytes 08-09 : 0xff 0xff fixe
         ...
         Byte 36     : GPU température en °C  ← 🌡️
         Bytes 37-62 : padding 0x00
     """
-    # Timing
     tick = int(time.monotonic() * 1000)
     b3 = (tick >> 16) & 0xFF
     b4 = (tick >> 8)  & 0xFF
@@ -120,9 +172,21 @@ def build_packet(cpu_temp: int, gpu_temp: int) -> list:
         0x00, 0x00, 0x9d,
     ]
 
-    # Compléter jusqu'à 63 bytes (hidapi ajoute le Report ID => 64 total)
     packet += [0x00] * (63 - len(packet))
     return packet
+
+def build_packet_linux(cpu_temp: int) -> list:
+    """
+    Protocole Linux — ultra simple !
+    [0x1b, cpu_temp, 0x00 * 62]
+    """
+    return [0x1b, cpu_temp & 0xFF] + [0x00] * 62
+
+def build_packet(cpu_temp: int, gpu_temp: int) -> list:
+    if OS == "Windows":
+        return build_packet_windows(cpu_temp, gpu_temp)
+    else:
+        return build_packet_linux(cpu_temp)
 
 # ─── Envoi HID robuste ───────────────────────────────────────────
 def send_packet(device: hid.device, packet: list) -> bool:
@@ -145,6 +209,7 @@ def send_packet(device: hid.device, packet: list) -> bool:
 def main():
     print("=" * 50)
     print("  X-Gamerx Cooler Display Driver")
+    print(f"  OS détecté: {OS}")
     print("  github.com/xxx/open-cooler-protocol")
     print("=" * 50)
 
